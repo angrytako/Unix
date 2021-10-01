@@ -1,0 +1,52 @@
+/*semStat[size_w*size_h] inizializzato a 0/
+/*ogni taxi farà una wait su questo semaforo quando vorrà alterare una statistica che interessa anche al master per la stampa*/
+/*ci può sempre essere al massimo una wait per processo su questo semaforo, per cui il +1 serve a fare in modo che solo*/
+/*il master possa azzerare il semaforo, usando la semctl, bloccando quindi nuovi tentativi di accesso*/
+/*semStat[size_w*size_h+1] servirà per indicare quanti processi si trovano in sezione critica in un dato momento */
+	
+
+/*-----------------------------------taxi-------------------------------------------------------*/
+
+struct sembuf spec_sem[2];
+bzero(spec_sem,sizeof(spec_sem[0]));
+bzero(spec_sem+1,sizeof(spec_sem[0]));
+
+spec_sem[0].sem_num=size_w*size_h;		  /*semaforo del num di operazioni; e' grosso quanto il num taxi+1, per cui*/
+spec_sem[0].sem_op=0;					/*l'unico modo in cui puo' entrare in waiting e' se il master lo ha azzerato*/
+
+spec_sem[1].sem_num=size_w*size_h+1;
+spec_sem[1].sem_op=+1;
+
+while(semop(semStat, spec_sem, 2)==-1);	/*in un operazione atomica chiedo il permesso sul semaforo di coordinazione (grande SO_TAXI+1)
+                                        e aggiorno quello che conta il num dei taxi al momento impegnati in un'operazione */
+
+/*Sezione critica*/
+
+spec_sem[1].sem_op=-1;
+	/*in quanto il master è l unico che può*/
+							/*averla azzerata, in quanto vuole fare una stampa*/
+while(semop(semStat, spec_sem+1,1)==-1);		/*diminuisco il num di taxi che stanno eseguendo un operazione al momento, cosa che non 
+							può andare in waiting, in quanto ogni taxi la incementa prima di entrare in sezione critica*/
+							/*non voglio, però, che un handler rovini questa operazione*/
+/*--------------------------------------------------------------fine taxi------------------------------------------------------------------------------------*/
+
+
+/*---------------------------------------------------------------master--------------------------------------------------------------------------------------*/
+struct sembuf sem;
+bzero(&sem,sizeof(sem));
+sem.sem_num=size_w*size_h;	/*aggiungo 1 al semaforo sul quali i taxi si bloccano se esso non è 0*/
+sem.sem_op=1;			
+
+semop(semStat, &sem,1);		/*aggiungo 1 al semaforo sul quali i taxi si bloccano se esso non è 0*/
+
+sem.sem_num=size_w*size_h+1;	/*aspetto che il numero dei taxi impegnati in un operazione raggiunga lo 0*/
+sem.sem_op=0;	
+
+semop(semStat, &sem,1); 	/*aspetto che i taxi impegnati in un'operazione finiscano*/
+/*sezione critica*/
+
+sem.sem_num=size_w*size_h;	/*tolgo -1 al semaforo che permette ai taxi di fare operazioni, riportandolo a 0*/
+sem.sem_op=-1;	
+
+semop(semStat, &sem,1);
+/*-------------------------------------------------------------fine master-----------------------------------------------------------------------------------*/
